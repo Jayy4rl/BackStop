@@ -61,4 +61,8 @@ export interface ChainClient {
   /** Arbiter executor (dev/local): calls resolveRelease / resolveRefund. */
   callArbiter?(escrow: string, fn: 'resolveRelease' | 'resolveRefund', rulingHash: `0x${string}`, key: `0x${string}`): Promise<string>;
   txStatus(hash: string): Promise<'pending' | 'success' | 'reverted' | 'unknown'>;
+  /** EVM only: Transfer logs of any token contract to the given addresses (catches fake tokens). */
+  anyTokenTransfersTo?(addresses: string[], fromBlock: bigint, toBlock: bigint): Promise<TokenTransferLog[]>;
+  /** Issuer blacklist events on a token (USDC Blacklisted/UnBlacklisted, USDT AddedBlackList/RemovedBlackList). */
+  freezeEvents(tokenContract: string, fromBlock: bigint, toBlock: bigint): Promise<Array<{ address: string; frozen: boolean; txHash: string; blockNumber: bigint }>>;
 }

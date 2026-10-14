@@ -278,6 +278,18 @@ export class TronChainClient implements ChainClient {
     return this.sendCall(key, escrow, `${fn}(bytes32)`, rulingHash.slice(2));
   }
 
+  async freezeEvents(token: string, fromBlock: bigint, toBlock: bigint) {
+    const [minTs, maxTs] = await Promise.all([this.blockTimestamp(fromBlock), this.blockTimestamp(toBlock)]);
+    const out: Array<{ address: string; frozen: boolean; txHash: string; blockNumber: bigint }> = [];
+    for (const e of await this.events(token, minTs, maxTs)) {
+      if (!['AddedBlackList', 'RemovedBlackList'].includes(e.event_name)) continue;
+      const raw = e.result._user ?? e.result.user ?? Object.values(e.result)[0];
+      if (!raw) continue;
+      out.push({ address: hexToTron(raw.startsWith('41') ? `0x${raw.slice(2)}` : raw), frozen: e.event_name === 'AddedBlackList', txHash: e.transaction_id, blockNumber: BigInt(e.block_number) });
+    }
+    return out;
+  }
+
   async txStatus(hash: string) {
     const info = await this.call<{ blockNumber?: number; receipt?: { result?: string } }>('/walletsolidity/gettransactioninfobyid', { value: hash });
     if (!info.blockNumber) return 'pending';

@@ -16,7 +16,7 @@ import {
   type Token,
 } from '@backstop/shared';
 import type { Ctx } from '../ctx.ts';
-import { maybe, many, one, tx } from '../db/pool.ts';
+import { maybe, many, one, tx, type Queryable } from '../db/pool.ts';
 import { audit } from '../lib/audit.ts';
 import { randomToken, sha256Hex } from '../lib/crypto.ts';
 import { badRequest, conflict, forbidden, notFound, unavailable } from '../lib/errors.ts';
@@ -82,12 +82,16 @@ async function resolveRecipient(ctx: Ctx, input: string): Promise<Resolved> {
 async function routeInternal(ctx: Ctx, senderId: string, token: Token, amount: bigint): Promise<Network> {
   const w = await walletOf(ctx.db, senderId);
   if (!w) throw forbidden('no_wallet', 'Set up your wallet first.');
-  const order: Network[] = token === 'USDT' ? ['tron', 'ethereum'] : [PREFERRED_INTERNAL_NETWORK.USDC, 'base', 'ethereum'];
+  const order = (token === 'USDT' ? (['tron', 'ethereum'] as Network[]) : ([PREFERRED_INTERNAL_NETWORK.USDC, 'base', 'ethereum'] as Network[])).filter((n) => !!ctx.cfg.chains[n]);
+  if (!order.length) throw unavailable('network_unavailable', `Sending ${token} is not available right now.`);
+  let best: { n: Network; balance: bigint } | null = null;
   for (const n of order) {
     const b = await pairBalance(ctx, ctx.db, senderId, w, n, token);
     if (b.spendable >= amount) return n;
+    if (!best || b.balance > best.balance) best = { n, balance: b.balance };
   }
-  return order[0]!;
+  // None can pay: route where the money is so the user sees the real reason (e.g. funds on hold).
+  return best!.n;
 }
 
 export function registerWallet(app: FastifyInstance, ctx: Ctx): void {
@@ -296,7 +300,7 @@ export function registerWallet(app: FastifyInstance, ctx: Ctx): void {
     if (s.user.tier === 'none' || s.user.kind === 'counterparty') throw forbidden('tier_required', 'Verify your identity before sending money.');
     return tx(ctx.db, async (q) => {
       const existing = await maybe<{ id: string }>(q, 'SELECT id FROM app.transfers WHERE user_id = $1 AND idempotency_key = $2', [s.user.id, b.idempotencyKey]);
-      if (existing) return prepared(existing.id);
+      if (existing) return prepared(q, existing.id);
       const d = await maybe<{ user_id: string; kind: string; decision: string; inputs: Record<string, unknown>; overridden_at: Date | null; created_at: Date; degraded: boolean }>(
         q,
         'SELECT * FROM network.check_decisions WHERE id = $1',
@@ -306,10 +310,12 @@ export function registerWallet(app: FastifyInstance, ctx: Ctx): void {
       if (d.decision === 'block') throw forbidden('blocked', 'This payment is blocked and cannot be sent.');
       if (d.decision === 'warn' && !d.overridden_at) throw forbidden('warning_unconfirmed', 'Read and confirm the warnings first.');
       if (ctx.now().getTime() - d.created_at.getTime() > DECISION_TTL_MS) throw conflict('check_expired', 'The safety check is out of date. Check again.');
-      const i = d.inputs as { address: string; network: Network; token: Token; amountUnits: string; recipientUserId: string | null };
+      const facts = d.inputs as { input: { network: Network; token: Token; amountUnits: string; recipientUserId?: string | null }; normalizedAddress: string | null; recipientIsBackstop: boolean };
+      if (!facts.normalizedAddress) throw forbidden('blocked', 'This payment is blocked and cannot be sent.');
+      const i = { ...facts.input, address: facts.normalizedAddress, recipientUserId: facts.input.recipientUserId ?? null };
       const amount = BigInt(i.amountUnits);
       await assertWithinLimits(ctx, q, s.user.id, s.user.tier, amount);
-      const internal = !!i.recipientUserId;
+      const internal = !!i.recipientUserId || facts.recipientIsBackstop;
       const fee = quoteSendFee({ internal, token: i.token }, await ctx.versioned.fees());
       await assertSpendable(ctx, q, s.user.id, i.network, i.token, amount + fee, 'payments');
       const w = (await walletOf(q, s.user.id))!;
@@ -339,12 +345,12 @@ export function registerWallet(app: FastifyInstance, ctx: Ctx): void {
         ],
       );
       await audit(q, { type: 'user', id: s.user.id }, 'send.prepared', 'transfer', t.id, { decisionId: b.decisionId, degraded: d.degraded });
-      return prepared(t.id);
+      return prepared(q, t.id);
     });
 
-    async function prepared(id: string) {
+    async function prepared(q: Queryable, id: string) {
       const t = await one<{ id: string; network: Network; token: Token; token_contract: string; amount_units: string; fee_units: string; to_address: string; status: string }>(
-        ctx.db,
+        q,
         'SELECT * FROM app.transfers WHERE id = $1',
         [id],
       );

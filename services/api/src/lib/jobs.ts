@@ -15,7 +15,8 @@ export async function enqueue(q: Queryable, kind: string, payload: Record<string
   await q.query(
     `INSERT INTO ops.jobs (kind, payload, run_at, dedupe_key, max_attempts) VALUES ($1,$2,$3,$4,$5)
      ON CONFLICT (dedupe_key) DO NOTHING`,
-    [kind, JSON.stringify(payload), opts.runAt ?? new Date(), opts.dedupeKey ?? null, opts.maxAttempts ?? 10],
+    // No runAt means "due now": the epoch is due under any clock.
+    [kind, JSON.stringify(payload), opts.runAt ?? new Date(0), opts.dedupeKey ?? null, opts.maxAttempts ?? 10],
   );
 }
 

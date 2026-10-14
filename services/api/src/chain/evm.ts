@@ -17,6 +17,12 @@ import { escrowAbi, escrowFactoryAbi, OnChainState, type Network } from '@backst
 import type { ChainClient, EscrowEvent, EscrowFn, OnChainEscrow, TokenTransferLog } from './types.ts';
 
 const transferEvent = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
+const freezeAbi = [
+  parseAbiItem('event Blacklisted(address indexed _account)'),
+  parseAbiItem('event UnBlacklisted(address indexed _account)'),
+  parseAbiItem('event AddedBlackList(address _user)'),
+  parseAbiItem('event RemovedBlackList(address _user)'),
+] as const;
 const erc20Abi = [
   { type: 'function', name: 'balanceOf', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'uint256' }] },
   { type: 'function', name: 'isBlacklisted', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'bool' }] },
@@ -213,6 +219,37 @@ export class EvmChainClient implements ChainClient {
     const w = this.wallet(key);
     const { request } = await this.client.simulateContract({ account: w.account, address: getAddress(escrow), abi: escrowAbi, functionName: fn, args: [rulingHash] });
     return w.writeContract(request);
+  }
+
+  async anyTokenTransfersTo(addresses: string[], fromBlock: bigint, toBlock: bigint) {
+    const out: TokenTransferLog[] = [];
+    const addrs = addresses.map((a) => getAddress(a));
+    for (let start = fromBlock; start <= toBlock; start += MAX_RANGE) {
+      const end = start + MAX_RANGE - 1n < toBlock ? start + MAX_RANGE - 1n : toBlock;
+      for (let i = 0; i < addrs.length; i += ADDRESS_CHUNK) {
+        const logs = await this.client.getLogs({ event: transferEvent, args: { to: addrs.slice(i, i + ADDRESS_CHUNK) }, fromBlock: start, toBlock: end });
+        for (const l of logs) {
+          if (!l.transactionHash || l.logIndex === null || l.blockNumber === null || l.args.value === undefined) continue;
+          out.push({ network: this.network, tokenContract: getAddress(l.address), from: getAddress(l.args.from!), to: getAddress(l.args.to!), amount: l.args.value, txHash: l.transactionHash, logIndex: l.logIndex, blockNumber: l.blockNumber, blockTime: await this.blockTime(l.blockNumber) });
+        }
+      }
+    }
+    return out;
+  }
+
+  async freezeEvents(token: string, fromBlock: bigint, toBlock: bigint) {
+    const out: Array<{ address: string; frozen: boolean; txHash: string; blockNumber: bigint }> = [];
+    for (let start = fromBlock; start <= toBlock; start += MAX_RANGE) {
+      const end = start + MAX_RANGE - 1n < toBlock ? start + MAX_RANGE - 1n : toBlock;
+      const logs = await this.client.getLogs({ address: getAddress(token), events: freezeAbi, fromBlock: start, toBlock: end });
+      for (const l of logs) {
+        const args = l.args as { _account?: Hex; _user?: Hex };
+        const who = args._account ?? args._user;
+        if (!who || !l.transactionHash || l.blockNumber === null) continue;
+        out.push({ address: getAddress(who), frozen: l.eventName === 'Blacklisted' || l.eventName === 'AddedBlackList', txHash: l.transactionHash, blockNumber: l.blockNumber });
+      }
+    }
+    return out;
   }
 
   async txStatus(hash: string) {
