@@ -110,11 +110,10 @@ export class TronChainClient implements ChainClient {
   private async locate(txId: string, token: string, from: string, to: string, value: bigint): Promise<{ blockNumber: bigint; logIndex: number } | null> {
     const info = await this.call<{ blockNumber?: number; log?: Array<{ address: string; topics: string[]; data: string }> }>('/walletsolidity/gettransactioninfobyid', { value: txId });
     if (!info.blockNumber) return null;
-    const tokenHex = tronToHex(token).slice(2).toLowerCase();
     const logs = info.log ?? [];
     for (let i = 0; i < logs.length; i++) {
       const l = logs[i]!;
-      if (l.address.toLowerCase().replace(/^41/, '') !== tokenHex || l.topics.length !== 3) continue;
+      if (hexToTron(l.address) !== token || l.topics.length !== 3) continue;
       const lf = hexToTron(`0x${l.topics[1]!.slice(-40)}`);
       const lt = hexToTron(`0x${l.topics[2]!.slice(-40)}`);
       if (lf === from && lt === to && BigInt(`0x${l.data || '0'}`) === value) return { blockNumber: BigInt(info.blockNumber), logIndex: i };
@@ -182,7 +181,7 @@ export class TronChainClient implements ChainClient {
   async escrowEvents(factory: string, escrows: string[], fromBlock: bigint, toBlock: bigint) {
     const [minTs, maxTs] = await Promise.all([this.blockTimestamp(fromBlock), this.blockTimestamp(toBlock)]);
     const out: EscrowEvent[] = [];
-    const toAddr = (v: string | undefined) => (v ? hexToTron(v.startsWith('41') ? `0x${v.slice(2)}` : v) : '');
+    const toAddr = (v: string | undefined) => (v ? hexToTron(v) : '');
     const created = (await this.events(factory, minTs, maxTs)).filter((e) => e.event_name === 'EscrowCreated');
     for (const e of created) {
       out.push({
@@ -292,7 +291,7 @@ export class TronChainClient implements ChainClient {
       if (!['AddedBlackList', 'RemovedBlackList'].includes(e.event_name)) continue;
       const raw = e.result._user ?? e.result.user ?? Object.values(e.result)[0];
       if (!raw) continue;
-      out.push({ address: hexToTron(raw.startsWith('41') ? `0x${raw.slice(2)}` : raw), frozen: e.event_name === 'AddedBlackList', txHash: e.transaction_id, blockNumber: BigInt(e.block_number) });
+      out.push({ address: hexToTron(raw), frozen: e.event_name === 'AddedBlackList', txHash: e.transaction_id, blockNumber: BigInt(e.block_number) });
     }
     return out;
   }

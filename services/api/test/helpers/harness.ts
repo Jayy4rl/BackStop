@@ -71,6 +71,13 @@ export async function createHarness(opts: { cfg?: Partial<Config>; overrides?: C
       await ctx.db.end();
       const admin = new pg.Client({ connectionString: ADMIN_URL });
       await admin.connect();
+      // Pool.end() resolves before its sockets close; dropping with FORCE while a backend is still
+      // exiting terminates it and surfaces an unhandled 57P01 on the closing client.
+      for (let i = 0; i < 50; i++) {
+        const r = await admin.query('SELECT count(*)::int AS n FROM pg_stat_activity WHERE datname = $1', [dbName]);
+        if (r.rows[0].n === 0) break;
+        await new Promise((res) => setTimeout(res, 20));
+      }
       await admin.query(`DROP DATABASE IF EXISTS "${dbName}" WITH (FORCE)`);
       await admin.end();
     },

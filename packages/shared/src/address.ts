@@ -70,8 +70,10 @@ export function tronToHex(tron: string): `0x${string}` {
   return getAddress(bytesToHex(raw.slice(1)));
 }
 
+/** Accepts a 20-byte hex address, or the 21-byte TRON form with its 0x41 prefix (as TRON nodes return it). */
 export function hexToTron(hex: string): string {
-  const body = hex.replace(/^0x/i, '').replace(/^41/, '');
+  const raw = hex.replace(/^0x/i, '');
+  const body = raw.length === 42 && raw.startsWith('41') ? raw.slice(2) : raw;
   if (body.length !== 40) throw new Error('expected 20-byte address');
   const bytes = new Uint8Array(21);
   bytes[0] = TRON_PREFIX;

@@ -65,6 +65,15 @@ describe('addresses', () => {
     expect(TronWeb.isAddress(USDT_TRON)).toBe(true);
   });
 
+  it('keeps a leading 41 byte that belongs to a 20-byte address', () => {
+    const hex = '0x41aabbccddeeff00112233445566778899aabbcc';
+    const tron = hexToTron(hex);
+    expect(TronWeb.address.fromHex(`41${hex.slice(2)}`)).toBe(tron);
+    expect(hexToTron(`41${hex.slice(2)}`)).toBe(tron);
+    expect(hexToTron(hex.slice(2))).toBe(tron);
+    expect(tronToHex(tron).toLowerCase()).toBe(hex);
+  });
+
   it('lists all EVM networks for an EVM address (L1-3) and only TRON for a TRON address', () => {
     expect(networksForAddress('0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913')).toEqual(['base', 'arc', 'ethereum']);
     expect(networksForAddress(USDT_TRON)).toEqual(['tron']);
