@@ -8,7 +8,7 @@ export const TRON_MESSAGE_PREFIX = '\x19TRON Signed Message:\n';
 export interface OwnershipChallenge {
   address: string;
   nonce: string;
-  purpose: 'appeal';
+  purpose: 'appeal' | 'wallet_link' | 'refund_address';
   issuedAt: string; // ISO
   expiresAt: string; // ISO
 }

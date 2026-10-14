@@ -1,0 +1,38 @@
+{
+  "name": "@backstop/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts",
+    "worker": "tsx src/worker.ts",
+    "migrate": "tsx src/db/migrate.ts",
+    "seed": "tsx src/seed.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@backstop/shared": "*",
+    "@fastify/cookie": "11.1.3",
+    "@fastify/cors": "11.3.1",
+    "@fastify/multipart": "10.1.3",
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0",
+    "@simplewebauthn/server": "14.0.3",
+    "fastify": "5.12.7",
+    "ioredis": "5.11.1",
+    "otpauth": "9.5.2",
+    "pdf-lib": "1.17.1",
+    "pg": "8.23.1",
+    "tsx": "4.23.15",
+    "viem": "2.57.7",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "@types/pg": "8.23.1",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}
