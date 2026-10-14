@@ -1,0 +1,19 @@
+# dependencies
+node_modules/
+
+# foundry
+contracts/out/
+contracts/cache/
+contracts/broadcast/*/31337/
+contracts/broadcast/**/dry-run/
+
+# env and secrets
+.env
+.env.*
+!.env.example
+
+# build output
+dist/
+coverage/
+*.log
+.DS_Store
