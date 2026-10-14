@@ -241,6 +241,13 @@ export class TronChainClient implements ChainClient {
   }
 
   async broadcast(signedTx: string) {
+    // Signed transactions arrive as protobuf hex, or as the signed JSON TronWeb/TronGrid produce.
+    if (signedTx.trim().startsWith('{')) {
+      const tx = JSON.parse(signedTx) as { txID: string };
+      const r = await this.call<{ result?: boolean; code?: string; message?: string }>('/wallet/broadcasttransaction', tx);
+      if (r.result || r.code === 'DUP_TRANSACTION_ERROR') return tx.txID;
+      throw new Error(`broadcast failed: ${r.code ?? ''} ${r.message ? Buffer.from(r.message, 'hex').toString() : ''}`.trim());
+    }
     const r = await this.call<{ result?: boolean; txid?: string; code?: string; message?: string }>('/wallet/broadcasthex', { transaction: signedTx.replace(/^0x/, '') });
     if (r.result && r.txid) return r.txid;
     if (r.code === 'DUP_TRANSACTION_ERROR' && r.txid) return r.txid; // already broadcast: same bytes, same tx

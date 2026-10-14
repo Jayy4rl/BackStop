@@ -369,7 +369,7 @@ export function registerWallet(app: FastifyInstance, ctx: Ctx): void {
   app.post('/send/submit', async (req) => {
     const s = await requireUser(ctx, req);
     assertCanMoveMoney(ctx, s);
-    const b = parse(z.object({ transferId: zUuid, signedTx: z.string().min(10).optional(), txHash: z.string().min(10).optional() }), req.body);
+    const b = parse(z.object({ transferId: zUuid, signedTx: z.string().min(10).optional(), txHash: z.string().min(10).optional(), feeSignedTx: z.string().min(10).optional() }), req.body);
     if (!b.signedTx && !b.txHash) throw badRequest('signed_tx', 'Provide the signed transaction or its hash.');
     const t = await maybe<{ id: string; user_id: string; network: Network; status: string; signed_tx_sha256: string | null; tx_hash: string | null }>(
       ctx.db,
@@ -399,6 +399,8 @@ export function registerWallet(app: FastifyInstance, ctx: Ctx): void {
         await audit(ctx.db, { type: 'user', id: s.user.id }, 'send.broadcast_failed', 'transfer', t.id, { error: (e as Error).message });
         throw badRequest('broadcast_failed', 'The network rejected this payment. No money left your wallet.');
       }
+      // TRON: the flat energy fee is a second transaction, relayed after the payment itself.
+      if (b.feeSignedTx) await chain.broadcast(b.feeSignedTx).catch(async (e: Error) => audit(ctx.db, { type: 'user', id: s.user.id }, 'send.fee_broadcast_failed', 'transfer', t.id, { error: e.message }));
     }
     await ctx.db.query("UPDATE app.transfers SET tx_hash = $2, status = 'submitted', submitted_at = coalesce(submitted_at, $3) WHERE id = $1", [t.id, txHash, ctx.now()]);
     await audit(ctx.db, { type: 'user', id: s.user.id }, 'send.submitted', 'transfer', t.id, { txHash });

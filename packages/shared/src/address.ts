@@ -2,7 +2,7 @@
 // Base58Check on TRON.
 import { createBase58check } from '@scure/base';
 import { sha256 } from '@noble/hashes/sha2.js';
-import { getAddress } from 'viem';
+import { bytesToHex, getAddress, hexToBytes } from 'viem';
 import { NETWORKS, NETWORK_INFO, type AddressFamily, type Network } from './chains.ts';
 
 const b58c = createBase58check(sha256);
@@ -67,7 +67,7 @@ export function networksForAddress(input: string): Network[] {
 export function tronToHex(tron: string): `0x${string}` {
   const raw = b58c.decode(tron);
   if (raw.length !== 21 || raw[0] !== TRON_PREFIX) throw new Error('not a TRON address');
-  return getAddress(`0x${Buffer.from(raw.slice(1)).toString('hex')}`);
+  return getAddress(bytesToHex(raw.slice(1)));
 }
 
 export function hexToTron(hex: string): string {
@@ -75,7 +75,7 @@ export function hexToTron(hex: string): string {
   if (body.length !== 40) throw new Error('expected 20-byte address');
   const bytes = new Uint8Array(21);
   bytes[0] = TRON_PREFIX;
-  bytes.set(Buffer.from(body, 'hex'), 1);
+  bytes.set(hexToBytes(`0x${body}`), 1);
   return b58c.encode(bytes);
 }
 

@@ -26,7 +26,15 @@ export function registerPublic(app: FastifyInstance, ctx: Ctx): void {
   });
 
   app.get('/public/config', async () => ({
-    networks: (Object.keys(NETWORK_INFO) as Network[]).map((n) => ({ ...NETWORK_INFO[n], enabled: !!ctx.cfg.chains[n], escrow: !!ctx.cfg.chains[n]?.factory, chainId: ctx.cfg.chains[n]?.chainId ?? null })),
+    networks: (Object.keys(NETWORK_INFO) as Network[]).map((n) => ({
+      ...NETWORK_INFO[n],
+      enabled: !!ctx.cfg.chains[n],
+      escrow: !!ctx.cfg.chains[n]?.factory,
+      chainId: ctx.cfg.chains[n]?.chainId ?? null,
+      // Public node endpoint the embedded wallet uses to sign and send (never a keyed provider URL).
+      publicRpc: process.env[`PUBLIC_${n.toUpperCase()}_RPC_URL`] ?? (ctx.cfg.env !== 'production' ? (ctx.cfg.chains[n]?.rpcUrls[0] ?? null) : null),
+      tokens: ctx.cfg.chains[n]?.tokens ?? {},
+    })),
     p2pEnabled: ctx.cfg.p2pEnabled,
     captcha: { provider: ctx.captcha.name, siteKey: process.env.TURNSTILE_SITE_KEY ?? null },
     consent: { version: CONSENT_VERSION, text: CONSENT_TEXT },
