@@ -229,6 +229,23 @@ describe('web app end to end', () => {
     await cctx.close();
   });
 
+  it('WCAG 2.1 AA: no automated axe violations on key pages', async () => {
+    const { createRequire } = await import('node:module');
+    const axeSource = (await import('node:fs')).readFileSync(createRequire(import.meta.url).resolve('axe-core/axe.min.js'), 'utf8');
+    const check = async (page: Page, path: string) => {
+      await page.goto(path);
+      await page.waitForLoadState('networkidle');
+      await page.addScriptTag({ content: axeSource });
+      const r = await page.evaluate(async () => (window as any).axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'] } }));
+      return (r.violations as Array<{ id: string; impact: string; nodes: Array<{ target: string[] }> }>).map((v) => `${path}: ${v.id} (${v.impact}) ${v.nodes.map((n) => n.target.join(' ')).slice(0, 3).join(', ')}`);
+    };
+    const { page: anon } = await newUserContext();
+    const found: string[] = [];
+    for (const p of ['/welcome', '/signup', '/signin', '/appeal']) found.push(...(await check(anon, p)));
+    for (const p of ['/', '/send', '/receive', '/history', '/invoices', '/invoices/new', '/requests', '/settings', '/verify-identity', '/support', '/report']) found.push(...(await check(ada, p)));
+    expect(found).toEqual([]);
+  });
+
   it('staff sign in with SSO and TOTP and see the queues', async () => {
     await h.ctx.db.query("INSERT INTO app.staff (email, name, roles) VALUES ('analyst@backstop.ng','Analyst',ARRAY['risk_analyst'])");
     const { page } = await newUserContext();
