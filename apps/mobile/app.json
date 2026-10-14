@@ -1,0 +1,34 @@
+{
+  "expo": {
+    "name": "Backstop",
+    "slug": "backstop",
+    "scheme": "backstop",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "bundleIdentifier": "ng.backstop.app",
+      "supportsTablet": false,
+      "associatedDomains": ["webcredentials:backstop.ng"],
+      "infoPlist": {
+        "NSCameraUsageDescription": "Backstop uses the camera for your selfie identity check and to scan payment QR codes.",
+        "NSFaceIDUsageDescription": "Backstop uses Face ID to unlock your wallet and approve payments."
+      }
+    },
+    "android": {
+      "package": "ng.backstop.app",
+      "minSdkVersion": 28,
+      "permissions": ["CAMERA", "USE_BIOMETRIC", "USE_FINGERPRINT", "POST_NOTIFICATIONS"]
+    },
+    "plugins": [
+      "expo-secure-store",
+      ["expo-notifications", { "color": "#1b5e48" }],
+      ["expo-camera", { "cameraPermission": "Backstop uses the camera for your selfie identity check and to scan payment QR codes." }],
+      ["expo-local-authentication", { "faceIDPermission": "Backstop uses Face ID to unlock your wallet and approve payments." }]
+    ],
+    "extra": {
+      "apiUrl": "https://api.backstop.ng"
+    }
+  }
+}

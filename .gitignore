@@ -18,3 +18,6 @@ coverage/
 *.log
 .DS_Store
 .data/
+dist-android/
+dist-ios/
+.expo/
