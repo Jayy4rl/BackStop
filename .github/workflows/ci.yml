@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: foundry-rs/foundry-toolchain@v1
+      - name: Forge tests (unit, transition matrix, hostile tokens, invariants)
+        run: cd contracts && FOUNDRY_PROFILE=ci forge test
+      - name: ABIs in the shared package match the contracts
+        run: npm run abi && git diff --exit-code packages/shared/src/abi.generated.ts packages/shared/src/testing.generated.ts
+
+  app:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+    env:
+      TEST_DATABASE_ADMIN_URL: postgres://postgres@127.0.0.1:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: foundry-rs/foundry-toolchain@v1 # anvil for the chain end-to-end tests
+      - run: npm run typecheck
+      - run: npm run test -w @backstop/shared
+      - run: npm run test -w @backstop/api
+      - run: npm run build:web
+      - name: Browser end-to-end
+        run: |
+          npx playwright install --with-deps chromium
+          PLAYWRIGHT_CHROMIUM=$(node -e "console.log(require('playwright').chromium.executablePath())") npm run test:e2e
+      - name: Mobile bundles
+        run: cd apps/mobile && CI=1 npx expo export --platform android --output-dir dist-android && CI=1 npx expo export --platform ios --output-dir dist-ios

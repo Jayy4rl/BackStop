@@ -92,6 +92,26 @@ export function registerIdentity(app: FastifyInstance, ctx: Ctx): void {
     return j(await profile(ctx, ctx.db, s.user.id));
   });
 
+  // Account closure: no money may be held in open protected payments or P2P trades. Identity data
+  // is then kept for the legal retention period and purged by the keeper (C1-9).
+  app.post('/me/close', async (req) => {
+    const s = await requireUser(ctx, req);
+    const open = await maybe(
+      ctx.db,
+      "SELECT 1 FROM app.payments WHERE (payer_user_id = $1 OR payee_user_id = $1) AND status IN ('funded','delivered','disputed') UNION SELECT 1 FROM app.p2p_trades WHERE (seller_id = $1 OR buyer_id = $1) AND status IN ('awaiting_escrow','escrowed','paid','disputed')",
+      [s.user.id],
+    );
+    if (open) throw conflict('open_payments', 'Finish or cancel your open protected payments and trades first.');
+    await tx(ctx.db, async (q) => {
+      await q.query("UPDATE app.users SET status = 'closed' WHERE id = $1", [s.user.id]);
+      await q.query('UPDATE app.sessions SET revoked_at = $2 WHERE user_id = $1 AND revoked_at IS NULL', [s.user.id, ctx.now()]);
+      await q.query('UPDATE app.identity_records SET retain_until = $2 WHERE user_id = $1', [s.user.id, retainUntil(ctx.now())]);
+      await q.query('UPDATE app.consents SET withdrawn_at = $2 WHERE user_id = $1 AND withdrawn_at IS NULL', [s.user.id, ctx.now()]);
+      await audit(q, { type: 'user', id: s.user.id }, 'account.closed', 'user', s.user.id, {});
+    });
+    return { ok: true, identityDataRetainedUntil: retainUntil(ctx.now()) };
+  });
+
   app.get('/me/limits', async (req) => {
     const s = await requireUser(ctx, req);
     return j(await limitsView(ctx, ctx.db, s.user.id, s.user.tier));

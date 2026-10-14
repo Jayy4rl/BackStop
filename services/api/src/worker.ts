@@ -1,13 +1,14 @@
 // Worker process: chain indexer, keeper sweeps and the durable job queue.
 import { loadConfig } from './config.ts';
 import { createCtx } from './ctx.ts';
-import { migrate } from './db/migrate.ts';
+import { ensureDatabase, migrate } from './db/migrate.ts';
 import { JobRunner } from './lib/jobs.ts';
 import { indexAll } from './services/indexer.ts';
 import { jobHandlers, keeperSweep } from './services/keeper.ts';
 import { seedReferenceData } from './seed.ts';
 
 const cfg = loadConfig();
+if (cfg.env !== 'production') await ensureDatabase(cfg.databaseUrl);
 await migrate(cfg.databaseUrl);
 const ctx = createCtx(cfg);
 await ctx.versioned.ensureDefaults();

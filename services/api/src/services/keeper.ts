@@ -226,6 +226,15 @@ export async function keeperSweep(ctx: Ctx): Promise<Record<string, number>> {
 
   await ctx.db.query("UPDATE app.payment_requests SET status = 'expired' WHERE status = 'open' AND expires_at < $1", [now]);
 
+  // C1-9: identity data of closed accounts is purged once the legal retention period ends.
+  const purged = await ctx.db.query(
+    `UPDATE app.identity_records r SET payload_enc = '\\x'::bytea, vendor_ref = NULL, lookup_hmac = NULL
+     FROM app.users u WHERE u.id = r.user_id AND u.status = 'closed' AND r.retain_until < $1::date AND length(r.payload_enc) > 0 RETURNING r.id`,
+    [now],
+  );
+  for (const r of purged.rows) await audit(ctx.db, ACTOR, 'identity.purged', 'identity_record', r.id as string, {});
+  if (purged.rowCount) bump('identity_purged', purged.rowCount);
+
   // Daily and hourly schedules.
   await enqueue(ctx.db, 'sanctions_refresh', {}, { dedupeKey: `sanctions:${day}` });
   await enqueue(ctx.db, 'fx_refresh', {}, { dedupeKey: `fx:${now.toISOString().slice(0, 13)}` });

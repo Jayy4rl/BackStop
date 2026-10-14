@@ -98,7 +98,7 @@ beforeAll(async () => {
     server: { port: 5173, strictPort: true, proxy: { '/api': { target: `http://127.0.0.1:${API_PORT}`, rewrite: (p: string) => p.replace(/^\/api/, '') } } },
   });
   await vite.listen();
-  browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
+  browser = await chromium.launch({ executablePath: process.env.PLAYWRIGHT_CHROMIUM ?? '/opt/pw-browsers/chromium-1194/chrome-linux/chrome', args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
   await index();
 });
 

@@ -9,5 +9,17 @@
   ],
   "engines": {
     "node": ">=22.5"
+  },
+  "scripts": {
+    "typecheck": "npm run typecheck -w @backstop/shared -w @backstop/api -w @backstop/web -w @backstop/mobile",
+    "test": "npm run test:contracts && npm run test -w @backstop/shared && npm run test -w @backstop/api",
+    "test:contracts": "cd contracts && forge test",
+    "test:e2e": "npm run test:e2e -w @backstop/web",
+    "abi": "cd contracts && forge build && node scripts/export-abi.mjs",
+    "build:web": "npm run build -w @backstop/web",
+    "dev:chain": "npx tsx services/api/src/devchain.ts",
+    "dev:api": "npm run dev -w @backstop/api",
+    "dev:worker": "npm run worker -w @backstop/api",
+    "dev:web": "npm run dev -w @backstop/web"
   }
 }

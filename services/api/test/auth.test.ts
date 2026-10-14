@@ -137,6 +137,27 @@ describe('C2-2 recovery', () => {
   });
 });
 
+describe('C1-9 account closure and retention', () => {
+  it('closes the account, then purges identity data after the retention period', async () => {
+    const { keeperSweep } = await import('../src/services/keeper.ts');
+    const u = await signup(h);
+    await ok(h, { method: 'POST', url: '/identity/tier1', token: u.token, payload: { idType: 'nin', idNumber: '44455566677', firstName: 'Close', lastName: 'Me', dateOfBirth: '1990-01-01', livenessToken: 'ok' } });
+    const r = await ok(h, { method: 'POST', url: '/me/close', token: u.token });
+    expect(r.identityDataRetainedUntil).toMatch(/^2031-/);
+    expect((await call(h, { method: 'GET', url: '/me', token: u.token })).status).toBe(401);
+    await keeperSweep(h.ctx);
+    const before = await h.ctx.db.query('SELECT length(payload_enc) AS n FROM app.identity_records WHERE user_id = $1', [u.id]);
+    expect(Number(before.rows[0].n)).toBeGreaterThan(0);
+    const saved = h.clock.now;
+    h.clock.set(new Date('2031-12-01T00:00:00Z'));
+    await keeperSweep(h.ctx);
+    h.clock.set(saved);
+    const after = await h.ctx.db.query('SELECT length(payload_enc) AS n, lookup_hmac FROM app.identity_records WHERE user_id = $1', [u.id]);
+    expect(Number(after.rows[0].n)).toBe(0);
+    expect(after.rows[0].lookup_hmac).toBeNull();
+  });
+});
+
 describe('audit log', () => {
   it('is append-only', async () => {
     await expect(h.ctx.db.query('DELETE FROM audit.events')).rejects.toThrow(/append-only/);

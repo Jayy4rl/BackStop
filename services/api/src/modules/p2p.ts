@@ -205,6 +205,11 @@ export function registerP2p(app: FastifyInstance, ctx: Ctx): void {
     );
     if (!offer || offer.status !== 'active') throw notFound('Offer not available.');
     if (offer.merchant_id === s.user.id) throw badRequest('own_offer', 'You cannot trade with your own offer.');
+    // L4-9: limits on cancellations per day.
+    const limits = await ctx.versioned.limits();
+    const rep = await reputation(ctx.db, s.user.id);
+    if (rep.cancellationsToday >= limits.p2pMaxCancellationsPerDay)
+      throw forbidden('cancellation_limit', `You cancelled ${rep.cancellationsToday} trades today. You can open new trades again tomorrow.`);
     const amount = parseUnits(b.amount);
     if (amount < BigInt(offer.min_units) || amount > BigInt(offer.max_units)) throw badRequest('amount', `Choose between $${formatUnits(BigInt(offer.min_units))} and $${formatUnits(BigInt(offer.max_units))}.`);
     const merchant = await one<{ tier: string; status: string }>(ctx.db, 'SELECT tier, status FROM app.users WHERE id = $1', [offer.merchant_id]);

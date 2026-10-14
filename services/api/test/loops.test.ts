@@ -198,6 +198,19 @@ describe('L4 P2P trading', () => {
     expect(executed.at(-1)).toEqual({ escrow: esc, ruling: 'refund' });
   });
 
+  it('L4-9: a user over the daily cancellation limit cannot open new trades', async () => {
+    const b2 = await signup(h, { handle: 'buyer2' });
+    await tier1(h, b2, 'Kola', 'Bello');
+    const bank = (await ok(h, { method: 'POST', url: '/bank-accounts', token: b2.token, payload: { bankCode: '057', accountNumber: '0555666777' } })).id;
+    for (let i = 0; i < 3; i++) {
+      const t = await ok(h, { method: 'POST', url: '/p2p/trades', token: b2.token, payload: { offerId, amount: '10', bankAccountId: bank } });
+      await ok(h, { method: 'POST', url: `/p2p/trades/${t.id}/cancel`, token: b2.token, payload: { reason: 'changed my mind' } });
+    }
+    const r = await call(h, { method: 'POST', url: '/p2p/trades', token: b2.token, payload: { offerId, amount: '10', bankAccountId: bank } });
+    expect(r.status).toBe(403);
+    expect(r.body.error.code).toBe('cancellation_limit');
+  });
+
   it('G2 gate: P2P is off unless enabled', async () => {
     h.ctx.cfg.p2pEnabled = false;
     const r = await call(h, { method: 'GET', url: '/p2p/offers', token: buyer.token });
