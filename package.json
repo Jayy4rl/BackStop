@@ -1,0 +1,13 @@
+{
+  "name": "backstop",
+  "private": true,
+  "workspaces": [
+    "contracts",
+    "packages/*",
+    "services/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22.5"
+  }
+}

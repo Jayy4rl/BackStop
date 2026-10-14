@@ -25,3 +25,16 @@ forge build
 forge test                    # unit, transition matrix, hostile tokens, invariants I1–I9
 FOUNDRY_PROFILE=ci forge test # deeper invariant runs
 ```
+
+## Deploy
+
+`script/Deploy.s.sol` deploys an OpenZeppelin `TimelockController` (the factory admin) and the
+factory. The initial allowlist, freeze adapter and backup arbiter are applied through the timelock
+at zero delay, and the same batch raises the delay to 48h and revokes all deployer roles, leaving
+`ADMIN_MULTISIG` as sole proposer/executor/canceller. Env vars are documented in the script.
+
+```sh
+npm install   # @openzeppelin/contracts 5.0.2 (repo root)
+ADMIN_MULTISIG=0x.. ARBITER=0x.. TREASURY=0x.. TOKEN=0x.. TOKEN_KIND=usdc \
+  forge script script/Deploy.s.sol --rpc-url $RPC --private-key $PK --broadcast
+```

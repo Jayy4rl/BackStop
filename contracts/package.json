@@ -1,0 +1,11 @@
+{
+  "name": "@backstop/contracts",
+  "private": true,
+  "scripts": {
+    "build": "forge build",
+    "test": "forge test"
+  },
+  "devDependencies": {
+    "@openzeppelin/contracts": "5.0.2"
+  }
+}
