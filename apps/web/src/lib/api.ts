@@ -99,6 +99,7 @@ export const staffApi = {
 export interface PublicConfig {
   networks: Array<{ network: string; label: string; enabled: boolean; escrow: boolean; chainId: number | null; publicRpc: string | null; tokens: Record<string, string>; finality: string; gas: string }>;
   p2pEnabled: boolean;
+  demoAccounts: boolean;
   captcha: { provider: string; siteKey: string | null };
   consent: { version: string; text: string };
   walletProvider: string;

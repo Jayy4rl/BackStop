@@ -1,8 +1,9 @@
 // L2-2/L2-3 web checkout for clients: no app install; shows the freelancer's verified name, hold
 // rules and fee before funding; pays from an external wallet (or a free client account).
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { api, publicConfig } from '../lib/api';
+import { LaunchButton } from '../lib/demo';
 import { evmAccount, hasEvmWallet, hasTronWallet, sendExternal, tronAccount } from '../lib/external';
 import { ErrorNotice, Field, Loading, Money, Notice, Status, useAction, useLoad, When } from '../components/ui';
 
@@ -74,9 +75,10 @@ export function Checkout() {
           Pay from a wallet I control (not an exchange). Any refund returns to that wallet.
         </label>
         {!walletReady && <Notice kind="warn">Open this page in your wallet app, or install a wallet extension, to pay.</Notice>}
-        <p className="small muted">
-          Paying more than ${d.counterpartyVerificationAbove}? You'll need a free client account with a quick ID check. <Link to={`/signup?next=/checkout/${slug}`}>Create one</Link>
-        </p>
+        <div className="small muted">
+          <p>Paying more than ${d.counterpartyVerificationAbove}? You'll need a free client account with a quick ID check.</p>
+          <LaunchButton kind="counterparty" invoiceSlug={slug} next={`/checkout/${slug}`} label="Open a client account" className="btn secondary" />
+        </div>
       </div>
       <div className="card">
         <h2>Milestones</h2>

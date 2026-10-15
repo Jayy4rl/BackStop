@@ -58,6 +58,12 @@ npm run dev:worker                   # indexer, keeper, job queue
 npm run dev:web                      # http://localhost:5173 (proxies /api to the API)
 ```
 
+Open http://localhost:5173: visitors see the landing page, and **Launch App** opens the app with a
+sandbox demo account and a device wallet, with no sign-up (`DEMO_ACCOUNTS`, never available in
+production). The device passkey is created at the first payment confirmation; after that every
+send and release is confirmed with it as usual. Client and supplier links open a demo account for
+the email the link was sent to.
+
 All other settings and their defaults are in `services/api/.env.example`. Sandbox OTPs are
 recorded in `ops.outbox`; the sandbox identity vendor accepts any 11-digit BVN/NIN (IDs ending
 `0000` are "not found"); sandbox bank enquiry treats account numbers starting `99` as someone
@@ -72,9 +78,9 @@ Mobile: `cd apps/mobile && npx expo run:android` (or `run:ios`), with `extra.api
 | Command | Covers | Result (last run) |
 |---|---|---|
 | `cd contracts && forge test` | 77 Foundry tests: transition matrix, guard failures, hostile tokens, re-entrancy, time boundaries, same-block races, factory, deploy, invariants I1–I9 under fuzzing | 77 passed |
-| `npm run test -w @backstop/shared` | addresses, signatures (TRON signatures cross-checked against TronWeb), money, fees, escrow guards, business days, chat blocking, name matching | 23 passed |
-| `npm run test -w @backstop/api` | real Postgres per test file: auth with a software WebAuthn authenticator, identity, C3 checks and replay, P2P, fraud list and appeals, keeper; plus an **anvil end-to-end suite running the real contracts** through L1, L2 auto-release and fee collection, L3 dispute with 2-of-3 arbiter execution, frozen-payee refund (UC12), reclaim (UC9), payee-listed pause, indexer-behind pause, audit-chain integrity | 63 passed |
-| `npm run test:e2e` | Chromium with a virtual WebAuthn authenticator against the real API and anvil: sign-up, Tier 1, deposit, on-chain send between users, fraud-list block, L2 checkout from an external wallet, staff SSO+TOTP, axe-core WCAG 2.1 A/AA scan of 15 pages | 7 passed |
+| `npm run test -w @backstop/shared` | addresses, signatures (TRON signatures cross-checked against TronWeb), money, fees, escrow guards, business days, chat blocking, name matching | 24 passed |
+| `npm run test -w @backstop/api` | real Postgres per test file: auth with a software WebAuthn authenticator, identity, C3 checks and replay, P2P, fraud list and appeals, keeper; plus an **anvil end-to-end suite running the real contracts** through L1, L2 auto-release and fee collection, L3 dispute with 2-of-3 arbiter execution, frozen-payee refund (UC12), reclaim (UC9), payee-listed pause, indexer-behind pause, audit-chain integrity, sandbox demo accounts | 69 passed |
+| `npm run test:e2e` | Chromium with a virtual WebAuthn authenticator against the real API and anvil: landing page and Launch App, old sign-in links, Tier 1, deposit, on-chain send between users (first passkey created at confirmation), fraud-list block, L2 checkout from an external wallet, staff SSO+TOTP, axe-core WCAG 2.1 A/AA scan of 13 pages | 8 passed |
 | `npm run typecheck` | shared, API, web, mobile | clean |
 | `npm run build:web`; `expo export` (android, ios) | production builds | build |
 
@@ -86,7 +92,7 @@ Legend: ✅ implemented and tested · 🟡 implemented, partly verified or limit
 
 | ID | Status | Where |
 |---|---|---|
-| C1-1 sign-up, OTPs, passkey with wallet | ✅ | `modules/auth.ts`; tests `auth.test.ts`, browser e2e |
+| C1-1 sign-up, OTPs, passkey with wallet | 🟡 API and mobile; the web app uses sandbox demo accounts (see deviations) | `modules/auth.ts`; tests `auth.test.ts` |
 | C1-2 Tier 1 BVN/NIN + liveness | 🟡 vendor adapter, sandbox | `modules/identity.ts`, `adapters/identity.ts` |
 | C1-3 Tier 2 CAC + Tier 1 director + address | 🟡 sandbox registry | `modules/identity.ts` |
 | C1-4 counterparty document + liveness above threshold | ✅ | `identity.ts`, checkout, order acceptance |
@@ -149,6 +155,12 @@ Legend: ✅ implemented and tested · 🟡 implemented, partly verified or limit
 
 ## Deviations from the documents
 
+0. **Web sign-up and sign-in screens removed (by request).** The web app opens on a landing page
+   whose Launch App button creates a sandbox demo account (`/auth/demo/*`, flagged `demo` on the
+   user, refused in production). Phone and email OTPs, sign-in and recovery screens are gone from
+   the web app; their API endpoints remain and the mobile app still uses them. Demo accounts
+   start unverified, so the in-app Tier 1 check still applies before money moves. The staff
+   console keeps SSO + TOTP sign-in.
 1. **Fees on refunds (C4-11)** follow the architecture doc's decision D5(a): fees only on release;
    refunds return the full amount.
 2. **Open decisions D1–D6** are implemented as the architecture doc recommends (see

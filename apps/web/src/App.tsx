@@ -2,8 +2,7 @@ import { lazy, Suspense, useState, type ReactNode } from 'react';
 import { Navigate, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { useSession } from './lib/session';
 import { Loading, Notice } from './components/ui';
-import { Welcome, SignIn, Recover } from './pages/Auth';
-import { SignUp } from './pages/SignUp';
+import { Landing } from './pages/Landing';
 import { Home } from './pages/Home';
 import { Send } from './pages/Send';
 import { Receive } from './pages/Receive';
@@ -72,10 +71,10 @@ function Shell({ children }: { children: ReactNode }) {
             ))}
           </nav>
           <div style={{ padding: '16px 12px' }} className="small muted">
-            Signed in as <strong>{me?.handle ? `@${me.handle}` : me?.email}</strong>
+            {me?.demo ? 'Demo account' : 'Signed in as'} <strong>{me?.handle ? `@${me.handle}` : me?.email}</strong>
             <br />
             <button className="btn link" onClick={() => void signOut()}>
-              Sign out
+              {me?.demo ? 'Leave demo' : 'Sign out'}
             </button>
           </div>
         </aside>
@@ -100,8 +99,27 @@ function Private({ children }: { children: ReactNode }) {
   const { me, loading } = useSession();
   const loc = useLocation();
   if (loading) return <Loading />;
-  if (!me) return <Navigate to={`/welcome?next=${encodeURIComponent(loc.pathname)}`} replace />;
+  if (!me) return <Navigate to={`/?next=${encodeURIComponent(loc.pathname + loc.search)}`} replace />;
   return <Shell>{children}</Shell>;
+}
+
+/** "/" is the landing page for visitors and Home once the app is launched. */
+function Root() {
+  const { me, loading } = useSession();
+  if (loading) return <Loading />;
+  return me ? (
+    <Shell>
+      <Home />
+    </Shell>
+  ) : (
+    <Landing />
+  );
+}
+
+/** Old sign-up and sign-in links land on the landing page, keeping any ?next=. */
+function ToLanding() {
+  const loc = useLocation();
+  return <Navigate to={{ pathname: '/', search: loc.search }} replace />;
 }
 
 function Public({ children }: { children: ReactNode }) {
@@ -118,10 +136,9 @@ function Public({ children }: { children: ReactNode }) {
 export function App() {
   return (
     <Routes>
-      <Route path="/welcome" element={<Public><Welcome /></Public>} />
-      <Route path="/signup" element={<Public><SignUp /></Public>} />
-      <Route path="/signin" element={<Public><SignIn /></Public>} />
-      <Route path="/recover" element={<Public><Recover /></Public>} />
+      {['/welcome', '/signup', '/signin', '/recover'].map((p) => (
+        <Route key={p} path={p} element={<ToLanding />} />
+      ))}
       <Route path="/checkout/:slug" element={<Public><Checkout /></Public>} />
       <Route path="/orders/:slug" element={<Public><SupplierOrder /></Public>} />
       <Route path="/pay/:slug" element={<Public><PayRequest /></Public>} />
@@ -131,7 +148,7 @@ export function App() {
       <Route path="/u/:handle" element={<Public><Profile /></Public>} />
       <Route path="/staff/*" element={<Suspense fallback={<Loading />}><StaffApp /></Suspense>} />
 
-      <Route path="/" element={<Private><Home /></Private>} />
+      <Route path="/" element={<Root />} />
       <Route path="/send" element={<Private><Send /></Private>} />
       <Route path="/receive" element={<Private><Receive /></Private>} />
       <Route path="/history" element={<Private><History /></Private>} />

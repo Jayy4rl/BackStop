@@ -36,6 +36,7 @@ export function registerPublic(app: FastifyInstance, ctx: Ctx): void {
       tokens: ctx.cfg.chains[n]?.tokens ?? {},
     })),
     p2pEnabled: ctx.cfg.p2pEnabled,
+    demoAccounts: ctx.cfg.demoAccounts,
     captcha: { provider: ctx.captcha.name, siteKey: process.env.TURNSTILE_SITE_KEY ?? null },
     consent: { version: CONSENT_VERSION, text: CONSENT_TEXT },
     walletProvider: ctx.cfg.adapters.wallet,

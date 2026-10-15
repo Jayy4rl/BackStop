@@ -46,6 +46,7 @@ export interface UserRow {
   new_payee_threshold_units: string | null;
   phone_verified_at: Date | null;
   email_verified_at: Date | null;
+  demo: boolean;
 }
 
 export interface SessionInfo {

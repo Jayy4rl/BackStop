@@ -74,6 +74,8 @@ export interface Config {
   sanctionsListUrl: string;
   /** P2P (L4) is off until legal gate G2 clears. */
   p2pEnabled: boolean;
+  /** Sandbox demo accounts created without sign-up ("Launch App"). Never enabled in production. */
+  demoAccounts: boolean;
   treasury: Partial<Record<Network, string>>;
 }
 
@@ -95,6 +97,15 @@ function chain(network: Network, prefix: string): ChainConfig | undefined {
     startBlock: BigInt(process.env[`${prefix}_START_BLOCK`] ?? '0'),
     keeperKey: process.env[`${prefix}_KEEPER_KEY`],
   };
+}
+
+function demoAccounts(e: Config['env']): boolean {
+  const v = process.env.DEMO_ACCOUNTS;
+  if (e === 'production') {
+    if (v === 'true') throw new Error('DEMO_ACCOUNTS cannot be enabled in production');
+    return false;
+  }
+  return v !== 'false';
 }
 
 export function loadConfig(): Config {
@@ -146,6 +157,7 @@ export function loadConfig(): Config {
     },
     sanctionsListUrl: env('SANCTIONS_LIST_URL', 'https://www.treasury.gov/ofac/downloads/sdn.xml'),
     p2pEnabled: env('P2P_ENABLED', dev ? 'true' : 'false') === 'true',
+    demoAccounts: demoAccounts(e),
     treasury: {},
   };
   for (const [n, p] of [['tron', 'TRON'], ['base', 'BASE'], ['arc', 'ARC'], ['ethereum', 'ETH']] as const) {

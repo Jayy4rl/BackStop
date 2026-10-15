@@ -28,16 +28,6 @@ async function index() {
   await new JobRunner(h.ctx.db, jobHandlers(h.ctx)).runOnce(100, new Date());
 }
 
-async function otp(dest: string): Promise<string> {
-  for (let i = 0; i < 50; i++) {
-    const r = await h.ctx.db.query('SELECT body FROM ops.outbox WHERE destination = $1 ORDER BY id DESC LIMIT 1', [dest]);
-    const m = /code is (\d{6})/.exec(String(r.rows[0]?.body ?? ''));
-    if (m) return m[1]!;
-    await new Promise((res) => setTimeout(res, 100));
-  }
-  throw new Error(`no otp for ${dest}`);
-}
-
 async function newUserContext(): Promise<{ ctx: BrowserContext; page: Page }> {
   const ctx = await browser.newContext({ baseURL: 'http://localhost:5173', permissions: ['camera', 'clipboard-read', 'clipboard-write'] });
   const page = await ctx.newPage();
@@ -50,21 +40,18 @@ async function newUserContext(): Promise<{ ctx: BrowserContext; page: Page }> {
   return { ctx, page };
 }
 
-async function signUp(page: Page, handle: string, phone: string) {
-  await page.goto('/signup');
-  await page.getByLabel('Your name', { exact: true }).fill(`${handle} Tester`);
-  await page.getByLabel('Handle', { exact: true }).fill(handle);
-  await page.getByLabel('Email', { exact: true }).fill(`${handle}@example.com`);
-  await page.getByLabel('Phone', { exact: true }).fill(phone);
-  await page.getByRole('checkbox').check();
-  await page.getByRole('button', { name: 'Send codes' }).click();
-  await page.getByLabel(/Code sent by SMS/).fill(await otp(phone));
-  await page.getByLabel(/Code sent to .*@example.com/).fill(await otp(`${handle}@example.com`));
-  await page.getByRole('button', { name: 'Verify' }).click();
-  await page.getByRole('button', { name: 'Create passkey and wallet' }).click();
-  await page.waitForURL('**/verify-identity', { timeout: 20_000 }).catch(async (e) => {
+/** Landing page -> "Launch App" -> Home with a demo account. Returns the account's @handle. */
+async function launchApp(page: Page): Promise<string> {
+  await page.goto('/');
+  await page.getByRole('heading', { name: 'Pay anyone. Get what you paid for.' }).waitFor();
+  await page.getByRole('button', { name: 'Launch App' }).click();
+  await page.getByRole('heading', { name: /^Hello/ }).waitFor({ timeout: 20_000 }).catch(async (e) => {
     throw new Error(`${(e as Error).message}\nPAGE: ${await page.locator('body').innerText()}`);
   });
+  const handle = (await page.locator('aside strong').first().textContent())!.trim();
+  expect(handle).toMatch(/^@demo_[0-9a-f]{8}$/);
+  await page.goto('/verify-identity');
+  return handle;
 }
 
 async function verifyTier1(page: Page, id: string, first: string, last: string) {
@@ -112,15 +99,29 @@ afterAll(async () => {
 describe('web app end to end', () => {
   let ada: Page;
   let ben: Page;
+  let adaHandle: string;
+  let benHandle: string;
+  const passkeys = async (handle: string) =>
+    Number((await h.ctx.db.query('SELECT count(*) FROM app.passkeys p JOIN app.users u ON u.id = p.user_id WHERE u.handle = $1', [handle.slice(1)])).rows[0].count);
 
-  it('signs up with OTPs, a real passkey and a device wallet, then verifies Tier 1', async () => {
+  it('opens the app from the landing page with a demo account and device wallet, then verifies Tier 1', async () => {
     ada = (await newUserContext()).page;
-    await signUp(ada, 'adaui', '+2348031110001');
+    adaHandle = await launchApp(ada);
     await verifyTier1(ada, '21212121212', 'Ada', 'Uche');
-    const me = await h.ctx.db.query("SELECT u.tier, u.verified_name, w.evm_address FROM app.users u JOIN app.wallets w ON w.user_id = u.id WHERE u.handle = 'adaui'");
-    expect(me.rows[0]).toMatchObject({ tier: 'tier1', verified_name: 'ADA UCHE' });
-    const pk = await h.ctx.db.query("SELECT count(*) FROM app.passkeys p JOIN app.users u ON u.id = p.user_id WHERE u.handle = 'adaui'");
-    expect(Number(pk.rows[0].count)).toBe(1);
+    const me = await h.ctx.db.query('SELECT u.demo, u.tier, u.verified_name, w.evm_address FROM app.users u JOIN app.wallets w ON w.user_id = u.id WHERE u.handle = $1', [adaHandle.slice(1)]);
+    expect(me.rows[0]).toMatchObject({ demo: true, tier: 'tier1', verified_name: 'ADA UCHE' });
+    // The passkey is created at the first payment confirmation, not at launch.
+    expect(await passkeys(adaHandle)).toBe(0);
+  });
+
+  it('keeps the old sign-in links working: they land on the landing page', async () => {
+    const { page } = await newUserContext();
+    for (const p of ['/signup', '/signin', '/welcome?next=/send', '/history']) {
+      await page.goto(p);
+      await page.getByRole('button', { name: 'Launch App' }).waitFor();
+    }
+    expect(new URL(page.url()).searchParams.get('next')).toBe('/history');
+    await page.context().close();
   });
 
   it('shows the receive address with the one-token warning, then the deposit on Home', async () => {
@@ -139,10 +140,10 @@ describe('web app end to end', () => {
 
   it('sends to another user through the UI: check, passkey, device signature, final on chain', async () => {
     ben = (await newUserContext()).page;
-    await signUp(ben, 'benui', '+2348031110002');
+    benHandle = await launchApp(ben);
     await verifyTier1(ben, '23232323232', 'Ben', 'Okoro');
     await ada.goto('/send');
-    await ada.getByLabel('Who are you paying?').fill('@benui');
+    await ada.getByLabel('Who are you paying?').fill(benHandle);
     await ada.getByRole('button', { name: 'Continue' }).click();
     await ada.getByLabel('Token').selectOption('USDC');
     await ada.getByLabel('Amount in dollars').fill('25');
@@ -155,9 +156,11 @@ describe('web app end to end', () => {
     await ben.goto('/');
     await expect.poll(async () => ben.locator('.big').first().textContent(), { timeout: 20_000 }).toContain('$25.00');
     await ada.goto('/history');
-    await ada.getByText('To @benui').waitFor();
-    const t = await h.ctx.db.query("SELECT t.status FROM app.transfers t JOIN app.users u ON u.id = t.user_id WHERE u.handle = 'adaui' AND t.direction = 'out'");
+    await ada.getByText(`To ${benHandle}`).waitFor();
+    const t = await h.ctx.db.query("SELECT t.status FROM app.transfers t JOIN app.users u ON u.id = t.user_id WHERE u.handle = $1 AND t.direction = 'out'", [adaHandle.slice(1)]);
     expect(t.rows[0].status).toBe('final');
+    // The first confirmation created Ada's passkey on this device.
+    expect(await passkeys(adaHandle)).toBe(1);
   });
 
   it('shows a blocking warning for a confirmed-fraud address and no send button', async () => {
@@ -241,7 +244,7 @@ describe('web app end to end', () => {
     };
     const { page: anon } = await newUserContext();
     const found: string[] = [];
-    for (const p of ['/welcome', '/signup', '/signin', '/appeal']) found.push(...(await check(anon, p)));
+    for (const p of ['/', '/appeal']) found.push(...(await check(anon, p)));
     for (const p of ['/', '/send', '/receive', '/history', '/invoices', '/invoices/new', '/requests', '/settings', '/verify-identity', '/support', '/report']) found.push(...(await check(ada, p)));
     expect(found).toEqual([]);
   });

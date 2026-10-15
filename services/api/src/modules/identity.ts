@@ -41,6 +41,7 @@ export async function profile(ctx: Ctx, q: Queryable, userId: string) {
   const u = await one<UserRow & { phone_discoverable: boolean }>(q, 'SELECT * FROM app.users WHERE id = $1', [userId]);
   const w = await maybe<{ evm_address: string; tron_address: string; provider: string }>(q, 'SELECT evm_address, tron_address, provider FROM app.wallets WHERE user_id = $1', [userId]);
   const biz = u.kind === 'business' ? await maybe(q, 'SELECT company_name, cac_number, address, verified_at, second_approver_above_units FROM app.businesses WHERE user_id = $1', [userId]) : null;
+  const passkeys = await q.query('SELECT 1 FROM app.passkeys WHERE user_id = $1 AND revoked_at IS NULL LIMIT 1', [userId]);
   const memberships = await many(q, `SELECT m.business_id, m.role, b.company_name FROM app.business_members m JOIN app.businesses b ON b.user_id = m.business_id WHERE m.member_id = $1`, [userId]);
   return {
     id: u.id,
@@ -59,6 +60,8 @@ export async function profile(ctx: Ctx, q: Queryable, userId: string) {
     reverifyRequired: u.reverify_required,
     reverifyReason: u.reverify_reason,
     outgoingLockedUntil: u.outgoing_locked_until,
+    demo: u.demo,
+    hasPasskey: !!passkeys.rowCount,
     newPayeeThreshold: u.new_payee_threshold_units ? formatUnits(BigInt(u.new_payee_threshold_units)) : null,
     wallet: w ? { evmAddress: w.evm_address, tronAddress: w.tron_address, provider: w.provider } : null,
     business: biz,

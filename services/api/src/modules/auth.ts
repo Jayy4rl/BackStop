@@ -12,6 +12,7 @@ import {
   type AuthenticationResponseJSON,
   type RegistrationResponseJSON,
 } from '@simplewebauthn/server';
+import { randomBytes } from 'node:crypto';
 import { challengeMessage, checkEvmAddress, checkTronAddress, verifyOwnership } from '@backstop/shared';
 import type { Ctx } from '../ctx.ts';
 import { maybe, one, tx, type Queryable } from '../db/pool.ts';
@@ -225,6 +226,12 @@ async function linkWallet(ctx: Ctx, q: Queryable, userId: string, nonce: string,
     });
 }
 
+async function assertFirstDemoPasskey(q: Queryable, userId: string): Promise<void> {
+  const u = await one<{ demo: boolean }>(q, 'SELECT demo FROM app.users WHERE id = $1 FOR UPDATE', [userId]);
+  const existing = await q.query('SELECT 1 FROM app.passkeys WHERE user_id = $1 AND revoked_at IS NULL', [userId]);
+  if (!u.demo || existing.rowCount) throw forbidden('passkey_exists', 'Confirm with your existing passkey.');
+}
+
 // ---------------------------------------------------------------- routes
 
 export function registerAuth(app: FastifyInstance, ctx: Ctx): void {
@@ -328,6 +335,87 @@ export function registerAuth(app: FastifyInstance, ctx: Ctx): void {
     await screenUser(ctx, result.userId).catch(() => undefined);
     setSessionCookie(ctx, reply, result.token);
     return { token: result.token, userId: result.userId };
+  });
+
+  // Sandbox demo accounts ("Launch App", no sign-up). Step 1 creates the account and returns the
+  // wallet link message; step 2 links the device wallet and opens a session. Never in production.
+  app.post('/auth/demo/start', async (req) => {
+    if (!ctx.cfg.demoAccounts) throw notFound('Demo accounts are not available here.');
+    const b = parse(
+      z.object({ kind: z.enum(['individual', 'counterparty']).default('individual'), invoiceSlug: z.string().max(64).optional(), orderSlug: z.string().max(64).optional() }),
+      req.body ?? {},
+    );
+    if (!(await ctx.limiter.hit(`demo:${clientIp(req)}`, 20, 3600))) throw tooMany();
+    return tx(ctx.db, async (q) => {
+      const tag = randomBytes(4).toString('hex');
+      const individual = b.kind === 'individual';
+      // A client or supplier opened from an invoice or order link gets the email that link was sent
+      // to, so they can pay or accept it (both check the email). Looked up here, never taken from the browser.
+      let email = `demo-${tag}@demo.backstop.invalid`;
+      if (!individual && (b.invoiceSlug || b.orderSlug)) {
+        const link = b.invoiceSlug
+          ? await maybe<{ email: string }>(q, 'SELECT client_email AS email FROM app.invoices WHERE slug = $1', [b.invoiceSlug])
+          : await maybe<{ email: string }>(q, 'SELECT supplier_email AS email FROM app.trade_orders WHERE slug = $1', [b.orderSlug]);
+        if (!link) throw notFound('That link was not found.');
+        const holder = await maybe<{ id: string; demo: boolean }>(q, 'SELECT id, demo FROM app.users WHERE tenant_id = $1 AND lower(email) = lower($2) FOR UPDATE', [ctx.cfg.tenantId, link.email]);
+        if (holder && !holder.demo) throw conflict('account_exists', `An account with ${link.email} already exists.`);
+        // An earlier demo account for the same link hands the email over to the new one.
+        if (holder) await q.query('UPDATE app.users SET email = $2 WHERE id = $1', [holder.id, `demo-released-${tag}@demo.backstop.invalid`]);
+        email = link.email;
+      }
+      const u = await one<{ id: string }>(
+        q,
+        `INSERT INTO app.users (tenant_id, kind, email, email_verified_at, handle, display_name, country, tier, demo)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,true) RETURNING id`,
+        [ctx.cfg.tenantId, b.kind, email, ctx.now(), individual ? `demo_${tag}` : null, individual ? 'Demo user' : b.orderSlug ? 'Demo supplier' : 'Demo client', individual ? 'NG' : 'GB', individual ? 'none' : 'counterparty'],
+      );
+      const nonce = randomToken(12);
+      const issuedAt = ctx.now();
+      const challengeId = await storeChallenge(ctx, q, u.id, 'demo', nonce, { nonce, issuedAt: issuedAt.toISOString() });
+      await audit(q, { type: 'public' }, 'demo.started', 'user', u.id, { kind: b.kind });
+      return { challengeId, walletLink: { nonce, issuedAt: issuedAt.toISOString(), messageTemplate: walletLinkMessage(u.id, '{address}', nonce, issuedAt) } };
+    });
+  });
+
+  app.post('/auth/demo/finish', async (req, reply) => {
+    if (!ctx.cfg.demoAccounts) throw notFound('Demo accounts are not available here.');
+    const b = parse(z.object({ challengeId: z.string().uuid(), deviceFingerprint: zDevice, deviceLabel: z.string().max(80).optional(), wallet: zWallet }), req.body);
+    const result = await tx(ctx.db, async (q) => {
+      const ch = await takeChallenge(ctx, q, b.challengeId, 'demo');
+      const userId = ch.user_id!;
+      await linkWallet(ctx, q, userId, String(ch.data.nonce), new Date(String(ch.data.issuedAt)), b.wallet);
+      const device = await touchDevice(q, userId, b.deviceFingerprint, b.deviceLabel, true);
+      const token = await createSession(ctx, q, userId, device.id, false);
+      await audit(q, { type: 'user', id: userId }, 'demo.created', 'user', userId, { device: device.id });
+      return { token, userId };
+    });
+    await screenUser(ctx, result.userId).catch(() => undefined);
+    setSessionCookie(ctx, reply, result.token);
+    return result;
+  });
+
+  // A demo account creates its passkey the first time it confirms a payment or release; the
+  // registration (user verification required) counts as that confirmation.
+  app.post('/auth/demo/passkey/options', async (req) => {
+    const s = await requireUser(ctx, req);
+    return tx(ctx.db, async (q) => {
+      await assertFirstDemoPasskey(q, s.user.id);
+      return registrationOptions(ctx, q, s.user, 'demo_passkey');
+    });
+  });
+
+  app.post('/auth/demo/passkey', async (req) => {
+    const s = await requireUser(ctx, req);
+    const b = parse(z.object({ challengeId: z.string().uuid(), credential: z.any(), label: z.string().max(80).optional() }), req.body);
+    return tx(ctx.db, async (q) => {
+      await assertFirstDemoPasskey(q, s.user.id);
+      const ch = await takeChallenge(ctx, q, b.challengeId, 'demo_passkey');
+      if (ch.user_id !== s.user.id) throw forbidden('challenge_user', 'This request belongs to another account.');
+      const id = await verifyRegistration(ctx, q, s.user.id, ch.challenge, b.credential as RegistrationResponseJSON, b.label);
+      await q.query('UPDATE app.sessions SET last_passkey_at = $2 WHERE id = $1', [s.sessionId, ctx.now()]);
+      await audit(q, { type: 'user', id: s.user.id }, 'passkey.added', 'passkey', id, { demo: true });
+      return { ok: true, validForSeconds: 300 };
+    });
   });
 
   // Sign-in with passkey.

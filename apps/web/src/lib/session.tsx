@@ -17,6 +17,8 @@ export interface Me {
   reverifyRequired: boolean;
   reverifyReason: string | null;
   outgoingLockedUntil: string | null;
+  demo: boolean;
+  hasPasskey: boolean;
   newPayeeThreshold: string | null;
   wallet: { evmAddress: string; tronAddress: string; provider: string } | null;
   business: { company_name: string; verified_at: string | null } | null;

@@ -168,6 +168,29 @@ export async function signup(h: Harness, o: { kind?: 'individual' | 'business' |
   return { id: fin.userId, token: fin.token, handle, email, phone, key, evm: acct.address, tron, auth, device };
 }
 
+/** "Launch App": a sandbox demo account with a linked device wallet and no passkey yet. */
+export async function demoAccount(h: Harness, kind: 'individual' | 'counterparty' = 'individual', link: { invoiceSlug?: string; orderSlug?: string } = {}): Promise<TestUser> {
+  counter += 1;
+  const start = await ok(h, { method: 'POST', url: '/auth/demo/start', payload: { kind, ...link } });
+  const key = generatePrivateKey();
+  const acct = privateKeyToAccount(key);
+  const tron = hexToTron(acct.address);
+  const tmpl: string = start.walletLink.messageTemplate;
+  const device = `demo-device-${counter}`;
+  const fin = await ok(h, {
+    method: 'POST',
+    url: '/auth/demo/finish',
+    payload: {
+      challengeId: start.challengeId,
+      deviceFingerprint: device,
+      deviceLabel: 'Web browser',
+      wallet: { provider: 'sandbox', providerWalletId: `device:${device}`, evmAddress: acct.address, tronAddress: tron, evmSignature: await acct.signMessage({ message: tmpl.replace('{address}', acct.address) }), tronSignature: await tronSign(key, tmpl.replace('{address}', tron)) },
+    },
+  });
+  const me = await ok(h, { method: 'GET', url: '/me', token: fin.token });
+  return { id: fin.userId, token: fin.token, handle: me.handle, email: me.email, phone: '', key, evm: acct.address, tron, auth: new SoftAuthenticator('localhost', ORIGIN), device };
+}
+
 export async function stepUp(h: Harness, u: TestUser): Promise<void> {
   const o = await ok(h, { method: 'POST', url: '/auth/step-up/options', token: u.token });
   await ok(h, { method: 'POST', url: '/auth/step-up/finish', token: u.token, payload: { challengeId: o.challengeId, credential: u.auth.assert(o.options, u.id) } });

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
+import { LaunchButton } from '../lib/demo';
 import { useSession } from '../lib/session';
 import { Copy, ErrorNotice, Field, Loading, Money, Notice, Qr, Status, useAction, useLoad, When } from '../components/ui';
 
@@ -142,9 +143,7 @@ export function PayRequest() {
               Pay with Backstop
             </Link>
           ) : (
-            <Link className="btn" to={`/welcome?next=${encodeURIComponent(`/pay/${slug}`)}`}>
-              Pay with Backstop
-            </Link>
+            <LaunchButton next={`/pay/${slug}`} label="Pay with Backstop" />
           )}
           <h2>Or pay from any wallet</h2>
           {d.pay.map((p: any) => (

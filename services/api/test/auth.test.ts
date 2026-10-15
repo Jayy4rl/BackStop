@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { call, createHarness, lastOtp, ok, signup, stepUp, tier1, type Harness } from './helpers/harness.ts';
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import { hexToTron } from '@backstop/shared';
+import { loadConfig } from '../src/config.ts';
+import { call, createHarness, demoAccount, lastOtp, ok, signup, stepUp, tier1, tronSign, type Harness } from './helpers/harness.ts';
 import { SoftAuthenticator } from './helpers/webauthn.ts';
 
 let h: Harness;
@@ -69,6 +72,95 @@ describe('C1-2, C1-5 Tier 1 verification', () => {
     await ok(h, { method: 'POST', url: '/identity/tier1', token: u.token, payload: { idType: 'nin', idNumber: '55566677788', firstName: 'Sanctioned Test', lastName: 'Person', dateOfBirth: '1980-01-01', livenessToken: 'ok' } });
     const r = await h.ctx.db.query('SELECT sanctions_status FROM app.users WHERE id = $1', [u.id]);
     expect(r.rows[0].sanctions_status).toBe('confirmed_match');
+  });
+});
+
+describe('sandbox demo accounts ("Launch App")', () => {
+  it('creates an account with a linked device wallet and a session, without sign-up', async () => {
+    const d = await demoAccount(h);
+    const me = await ok(h, { method: 'GET', url: '/me', token: d.token });
+    expect(me).toMatchObject({ demo: true, hasPasskey: false, kind: 'individual', tier: 'none', country: 'NG' });
+    expect(me.handle).toMatch(/^demo_[0-9a-f]{8}$/);
+    expect(me.wallet.evmAddress).toBe(d.evm);
+    expect(me.wallet.tronAddress).toBe(d.tron);
+    const audit = await h.ctx.db.query('SELECT action FROM audit.events WHERE subject_id = $1 ORDER BY id', [d.id]);
+    expect(audit.rows.map((r) => r.action)).toEqual(expect.arrayContaining(['demo.started', 'demo.created']));
+    const cp = await demoAccount(h, 'counterparty');
+    expect(await ok(h, { method: 'GET', url: '/me', token: cp.token })).toMatchObject({ demo: true, kind: 'counterparty', tier: 'counterparty', handle: null });
+  });
+
+  it('creates the first passkey at the first money confirmation, which counts as the step-up', async () => {
+    const d = await demoAccount(h);
+    const noPasskey = await call(h, { method: 'POST', url: '/auth/passkeys', token: d.token, payload: {} });
+    expect(noPasskey.body.error.code).toBe('passkey_required');
+    const o = await ok(h, { method: 'POST', url: '/auth/demo/passkey/options', token: d.token });
+    await ok(h, { method: 'POST', url: '/auth/demo/passkey', token: d.token, payload: { challengeId: o.challengeId, credential: d.auth.register(o.options) } });
+    const s = await h.ctx.db.query('SELECT last_passkey_at FROM app.sessions WHERE user_id = $1', [d.id]);
+    expect(s.rows[0].last_passkey_at).not.toBeNull();
+    expect((await ok(h, { method: 'GET', url: '/me', token: d.token })).hasPasskey).toBe(true);
+    // Only the first one: later confirmations use the passkey as usual.
+    const again = await call(h, { method: 'POST', url: '/auth/demo/passkey/options', token: d.token });
+    expect(again.body.error.code).toBe('passkey_exists');
+    await stepUp(h, d);
+  });
+
+  it('refuses the first-passkey shortcut for real accounts', async () => {
+    const u = await signup(h);
+    const r = await call(h, { method: 'POST', url: '/auth/demo/passkey/options', token: u.token });
+    expect(r.status).toBe(403);
+  });
+
+  it('gives a client opened from an invoice link the email the invoice was sent to', async () => {
+    const fre = await signup(h);
+    await tier1(h, fre);
+    const due = new Date(h.clock.now.getTime() + 10 * 86_400_000).toISOString();
+    const inv = await ok(h, { method: 'POST', url: '/invoices', token: fre.token, payload: { clientEmail: 'Client@Abroad.com', description: 'Logo', dueDate: due, milestones: [{ title: 'Logo', amount: '100', dueDate: due }] } });
+    const first = await demoAccount(h, 'counterparty', { invoiceSlug: inv.slug });
+    expect((await ok(h, { method: 'GET', url: '/me', token: first.token })).email).toBe('client@abroad.com');
+    // Launching again from the same link hands the email to the new demo account.
+    const second = await demoAccount(h, 'counterparty', { invoiceSlug: inv.slug });
+    expect((await ok(h, { method: 'GET', url: '/me', token: second.token })).email).toBe('client@abroad.com');
+    expect((await ok(h, { method: 'GET', url: '/me', token: first.token })).email).toMatch(/^demo-released-/);
+    // A real account's email is never taken over.
+    const inv2 = await ok(h, { method: 'POST', url: '/invoices', token: fre.token, payload: { clientEmail: fre.email, description: 'Logo', dueDate: due, milestones: [{ title: 'Logo', amount: '100', dueDate: due }] } });
+    const taken = await call(h, { method: 'POST', url: '/auth/demo/start', payload: { kind: 'counterparty', invoiceSlug: inv2.slug } });
+    expect(taken.body.error.code).toBe('account_exists');
+    expect((await call(h, { method: 'POST', url: '/auth/demo/start', payload: { kind: 'counterparty', orderSlug: 'nope' } })).status).toBe(404);
+  });
+
+  it('requires the wallet ownership signatures and a single-use challenge', async () => {
+    const start = await ok(h, { method: 'POST', url: '/auth/demo/start', payload: {} });
+    const key = generatePrivateKey();
+    const acct = privateKeyToAccount(key);
+    const tron = hexToTron(acct.address);
+    const tmpl: string = start.walletLink.messageTemplate;
+    const wallet = { provider: 'sandbox', providerWalletId: 'device:x', evmAddress: acct.address, tronAddress: tron, evmSignature: await acct.signMessage({ message: 'something else' }), tronSignature: await tronSign(key, tmpl.replace('{address}', tron)) };
+    const bad = await call(h, { method: 'POST', url: '/auth/demo/finish', payload: { challengeId: start.challengeId, deviceFingerprint: 'demo-device-bad', wallet } });
+    expect(bad.body.error.code).toBe('wallet_signature');
+    const good = { ...wallet, evmSignature: await acct.signMessage({ message: tmpl.replace('{address}', acct.address) }) };
+    await ok(h, { method: 'POST', url: '/auth/demo/finish', payload: { challengeId: start.challengeId, deviceFingerprint: 'demo-device-ok', wallet: good } });
+    const replay = await call(h, { method: 'POST', url: '/auth/demo/finish', payload: { challengeId: start.challengeId, deviceFingerprint: 'demo-device-ok', wallet: good } });
+    expect(replay.body.error.code).toBe('challenge_invalid');
+  });
+
+  it('is unavailable when switched off, and can never be switched on in production', async () => {
+    h.ctx.cfg.demoAccounts = false;
+    try {
+      expect((await call(h, { method: 'POST', url: '/auth/demo/start', payload: {} })).status).toBe(404);
+      expect((await ok(h, { method: 'GET', url: '/public/config' })).demoAccounts).toBe(false);
+    } finally {
+      h.ctx.cfg.demoAccounts = true;
+    }
+    const saved = { ...process.env };
+    try {
+      Object.assign(process.env, { NODE_ENV: 'production', DATA_KEY_HEX: 'aa'.repeat(32), LOOKUP_KEY_HEX: 'bb'.repeat(32), DOCUMENT_SIGNING_KEY_HEX: 'cc'.repeat(32) });
+      delete process.env.DEMO_ACCOUNTS;
+      expect(loadConfig().demoAccounts).toBe(false);
+      process.env.DEMO_ACCOUNTS = 'true';
+      expect(() => loadConfig()).toThrow(/cannot be enabled in production/);
+    } finally {
+      process.env = saved;
+    }
   });
 });
 

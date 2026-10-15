@@ -2,6 +2,7 @@
 // funds and upload shipping proof from the payment page.
 import { Link, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
+import { LaunchButton } from '../lib/demo';
 import { useSession } from '../lib/session';
 import { ErrorNotice, Loading, Money, Notice, Status, useAction, useLoad, When } from '../components/ui';
 
@@ -56,13 +57,8 @@ export function SupplierOrder() {
         </div>
       ) : !me ? (
         <div className="card">
-          <p>Create a free supplier account with {x.supplierEmail} to accept and get paid.</p>
-          <Link className="btn" to={`/signup?next=/orders/${slug}`}>
-            Create supplier account
-          </Link>{' '}
-          <Link className="btn secondary" to={`/signin?next=/orders/${slug}`}>
-            Sign in
-          </Link>
+          <p>Open a free supplier account for {x.supplierEmail} to accept and get paid.</p>
+          <LaunchButton kind="counterparty" orderSlug={slug} next={`/orders/${slug}`} label="Open supplier account" />
         </div>
       ) : (
         <div className="card">

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
 import { useSession } from '../lib/session';
-import { authenticate, register } from '../lib/passkey';
+import { authenticate, createFirstDemoPasskey, register } from '../lib/passkey';
 import { walletInfo } from '../lib/wallet';
 import { ErrorNotice, Field, Money, Notice, useAction, useLoad, When } from '../components/ui';
 import { Liveness } from '../components/Liveness';
@@ -45,6 +45,11 @@ export function Settings() {
     await refresh();
   });
   const addPasskey = useAction(async () => {
+    if (await createFirstDemoPasskey()) {
+      passkeys.reload();
+      await refresh();
+      return;
+    }
     const s = await api.post('/auth/step-up/options');
     await api.post('/auth/step-up/finish', { challengeId: s.challengeId, credential: await authenticate(s.options) });
     const o = await api.post('/auth/passkeys/options');
