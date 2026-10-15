@@ -77,9 +77,9 @@ Mobile: `cd apps/mobile && npx expo run:android` (or `run:ios`), with `extra.api
 
 | Command | Covers | Result (last run) |
 |---|---|---|
-| `cd contracts && forge test` | 77 Foundry tests: transition matrix, guard failures, hostile tokens, re-entrancy, time boundaries, same-block races, factory, deploy, invariants I1–I9 under fuzzing | 77 passed |
+| `cd contracts && forge test` | 83 Foundry tests: transition matrix, guard failures, hostile tokens, re-entrancy, time boundaries, same-block races, factory, deploy, invariants I1–I9 under fuzzing, Arc freeze adapter and deploy guard | 83 passed |
 | `npm run test -w @backstop/shared` | addresses, signatures (TRON signatures cross-checked against TronWeb), money, fees, escrow guards, business days, chat blocking, name matching | 24 passed |
-| `npm run test -w @backstop/api` | real Postgres per test file: auth with a software WebAuthn authenticator, identity, C3 checks and replay, P2P, fraud list and appeals, keeper; plus an **anvil end-to-end suite running the real contracts** through L1, L2 auto-release and fee collection, L3 dispute with 2-of-3 arbiter execution, frozen-payee refund (UC12), reclaim (UC9), payee-listed pause, indexer-behind pause, audit-chain integrity, sandbox demo accounts | 69 passed |
+| `npm run test -w @backstop/api` | real Postgres per test file: auth with a software WebAuthn authenticator, identity, C3 checks and replay, P2P, fraud list and appeals, keeper; plus an **anvil end-to-end suite running the real contracts** through L1, L2 auto-release and fee collection, L3 dispute with 2-of-3 arbiter execution, frozen-payee refund (UC12), reclaim (UC9), payee-listed pause, indexer-behind pause, audit-chain integrity, sandbox demo accounts; an **Arc suite** (native USDC system logs, blocklist precompile, send, frozen-payee refund) | 73 passed |
 | `npm run test:e2e` | Chromium with a virtual WebAuthn authenticator against the real API and anvil: landing page and Launch App, old sign-in links, Tier 1, deposit, on-chain send between users (first passkey created at confirmation), fraud-list block, L2 checkout from an external wallet, staff SSO+TOTP, axe-core WCAG 2.1 A/AA scan of 13 pages | 8 passed |
 | `npm run typecheck` | shared, API, web, mobile | clean |
 | `npm run build:web`; `expo export` (android, ios) | production builds | build |
@@ -196,6 +196,9 @@ Legend: ✅ implemented and tested · 🟡 implemented, partly verified or limit
   and the Nile testnet spike (CREATE2 addresses, USDT return values, freeze behaviour, energy
   sponsorship) are not done. The TRON chain client, TRON call bundles and TRON signature handling
   are implemented and unit-tested against TronWeb, but not run against a TRON node.
+- **Arc**: Arc's system contracts are reproduced by stand-ins in the local tests (system emitter,
+  NativeCoinControl precompile). The testnet checks in `contracts/README.md` confirm them against
+  the real chain before mainnet.
 - **External gates**: smart-contract audits (C4-13), penetration test, counsel's written advice
   (G1–G6), staffing, closed pilot.
 - **Not run on devices**: the mobile app typechecks and its production bundles build for Android

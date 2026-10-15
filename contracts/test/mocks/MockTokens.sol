@@ -22,7 +22,7 @@ abstract contract MockTokenBase {
         symbol = s;
     }
 
-    function mint(address to, uint256 v) external {
+    function mint(address to, uint256 v) external virtual {
         balanceOf[to] += v;
         totalSupply += v;
         emit Transfer(address(0), to, v);

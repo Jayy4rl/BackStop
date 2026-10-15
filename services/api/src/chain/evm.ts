@@ -1,5 +1,6 @@
 // EVM chains (Base, Arc, Ethereum) through viem, with automatic failover across the configured
-// node providers (PRD: two node providers per chain).
+// node providers (PRD: two node providers per chain). On Arc, USDC is the native coin: its
+// movements are read from the system emitter and its blocklist from the NativeCoinControl precompile.
 import {
   createPublicClient,
   createWalletClient,
@@ -13,7 +14,7 @@ import {
   type Chain,
 } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
-import { escrowAbi, escrowFactoryAbi, OnChainState, type Network } from '@backstop/shared';
+import { ARC_NATIVE_COIN_CONTROL, ARC_NATIVE_SCALE, ARC_SYSTEM_EMITTER, escrowAbi, escrowFactoryAbi, OnChainState, type Network } from '@backstop/shared';
 import type { ChainClient, EscrowEvent, EscrowFn, OnChainEscrow, TokenTransferLog } from './types.ts';
 
 const transferEvent = parseAbiItem('event Transfer(address indexed from, address indexed to, uint256 value)');
@@ -28,6 +29,8 @@ const erc20Abi = [
   { type: 'function', name: 'isBlacklisted', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'bool' }] },
   { type: 'function', name: 'isBlackListed', stateMutability: 'view', inputs: [{ name: 'a', type: 'address' }], outputs: [{ type: 'bool' }] },
 ] as const;
+const arcBlocklistAbi = [parseAbiItem('function isBlocklisted(address account) view returns (bool)')] as const;
+const arcBlocklistEvents = [parseAbiItem('event Blocklisted(address indexed account)'), parseAbiItem('event UnBlocklisted(address indexed account)')] as const;
 
 const MAX_RANGE = 2_000n;
 const ADDRESS_CHUNK = 200;
@@ -38,7 +41,11 @@ export interface EvmClientOptions {
   chainId?: number;
   finality: 'finalized' | 'latest' | 'solidified';
   keeperKey?: string;
+  /** Arc only: the ERC-20 interface of native USDC (0x3600…). */
+  nativeUsdc?: string;
 }
+
+type RawTransferLog = { address: Hex; args: { from?: Hex; to?: Hex; value?: bigint }; transactionHash: Hex | null; logIndex: number | null; blockNumber: bigint | null };
 
 export class EvmChainClient implements ChainClient {
   readonly family = 'evm' as const;
@@ -64,6 +71,16 @@ export class EvmChainClient implements ChainClient {
     return { latest: latest.number!, final: final.number!, finalTime: new Date(Number(final.timestamp) * 1000) };
   }
 
+  /** Arc's native USDC: every movement is logged by the system emitter, so that is the only log
+   * source (the interface's own log would count ERC-20 transfers twice and miss native sends). */
+  private isNativeUsdc(token: string): boolean {
+    return !!this.opts.nativeUsdc && getAddress(token) === getAddress(this.opts.nativeUsdc);
+  }
+
+  private logSource(token: string): { address: Hex; scale: bigint } {
+    return this.isNativeUsdc(token) ? { address: getAddress(ARC_SYSTEM_EMITTER), scale: ARC_NATIVE_SCALE } : { address: getAddress(token), scale: 1n };
+  }
+
   async isContract(address: string) {
     const code = await this.client.getCode({ address: getAddress(address) });
     return !!code && code !== '0x';
@@ -83,16 +100,20 @@ export class EvmChainClient implements ChainClient {
     return d;
   }
 
-  private async toTransfers(token: string, logs: Array<{ args: { from?: Hex; to?: Hex; value?: bigint }; transactionHash: Hex | null; logIndex: number | null; blockNumber: bigint | null }>): Promise<TokenTransferLog[]> {
+  /** `scale` converts the log's units to token units (Arc system logs are in 18 decimals); amounts
+   * below one token unit are dropped, as the token interface truncates them too. */
+  private async toTransfers(token: string, logs: RawTransferLog[], scale = 1n): Promise<TokenTransferLog[]> {
     const out: TokenTransferLog[] = [];
     for (const l of logs) {
-      if (!l.transactionHash || l.logIndex === null || l.blockNumber === null) continue;
+      if (!l.transactionHash || l.logIndex === null || l.blockNumber === null || l.args.value === undefined) continue;
+      const amount = l.args.value / scale;
+      if (amount === 0n) continue;
       out.push({
         network: this.network,
         tokenContract: getAddress(token),
         from: getAddress(l.args.from!),
         to: getAddress(l.args.to!),
-        amount: l.args.value!,
+        amount,
         txHash: l.transactionHash,
         logIndex: l.logIndex,
         blockNumber: l.blockNumber,
@@ -106,13 +127,14 @@ export class EvmChainClient implements ChainClient {
     const seen = new Set<string>();
     const out: TokenTransferLog[] = [];
     const addrs = addresses.map((a) => getAddress(a));
+    const src = this.logSource(token);
     for (let start = fromBlock; start <= toBlock; start += MAX_RANGE) {
       const end = start + MAX_RANGE - 1n < toBlock ? start + MAX_RANGE - 1n : toBlock;
       for (let i = 0; i < addrs.length; i += ADDRESS_CHUNK) {
         const chunk = addrs.slice(i, i + ADDRESS_CHUNK);
         for (const args of [{ to: chunk }, { from: chunk }]) {
-          const logs = await this.client.getLogs({ address: getAddress(token), event: transferEvent, args, fromBlock: start, toBlock: end });
-          for (const t of await this.toTransfers(token, logs)) {
+          const logs = await this.client.getLogs({ address: src.address, event: transferEvent, args, fromBlock: start, toBlock: end });
+          for (const t of await this.toTransfers(token, logs, src.scale)) {
             const k = `${t.txHash}:${t.logIndex}`;
             if (!seen.has(k)) {
               seen.add(k);
@@ -130,10 +152,11 @@ export class EvmChainClient implements ChainClient {
     const window = 50_000n;
     const from = latest > window ? latest - window : 0n;
     const logs: TokenTransferLog[] = [];
+    const src = this.logSource(token);
     for (let end = latest; end >= from && logs.length < limit; end -= MAX_RANGE) {
       const start = end - MAX_RANGE + 1n > from ? end - MAX_RANGE + 1n : from;
-      const l = await this.client.getLogs({ address: getAddress(token), event: transferEvent, args: { to: getAddress(address) }, fromBlock: start, toBlock: end });
-      logs.unshift(...(await this.toTransfers(token, l)));
+      const l = await this.client.getLogs({ address: src.address, event: transferEvent, args: { to: getAddress(address) }, fromBlock: start, toBlock: end });
+      logs.unshift(...(await this.toTransfers(token, l, src.scale)));
       if (start === from) break;
     }
     return logs.slice(-limit);
@@ -178,6 +201,13 @@ export class EvmChainClient implements ChainClient {
   }
 
   async isFrozen(token: string, address: string) {
+    if (this.isNativeUsdc(token)) {
+      try {
+        return await this.client.readContract({ address: getAddress(ARC_NATIVE_COIN_CONTROL), abi: arcBlocklistAbi, functionName: 'isBlocklisted', args: [getAddress(address)] });
+      } catch {
+        // fall back to the token interface below
+      }
+    }
     for (const fn of ['isBlacklisted', 'isBlackListed'] as const) {
       try {
         return await this.client.readContract({ address: getAddress(token), abi: erc20Abi, functionName: fn, args: [getAddress(address)] });
@@ -230,7 +260,18 @@ export class EvmChainClient implements ChainClient {
         const logs = await this.client.getLogs({ event: transferEvent, args: { to: addrs.slice(i, i + ADDRESS_CHUNK) }, fromBlock: start, toBlock: end });
         for (const l of logs) {
           if (!l.transactionHash || l.logIndex === null || l.blockNumber === null || l.args.value === undefined) continue;
-          out.push({ network: this.network, tokenContract: getAddress(l.address), from: getAddress(l.args.from!), to: getAddress(l.args.to!), amount: l.args.value, txHash: l.transactionHash, logIndex: l.logIndex, blockNumber: l.blockNumber, blockTime: await this.blockTime(l.blockNumber) });
+          let token = getAddress(l.address);
+          let amount = l.args.value;
+          if (this.opts.nativeUsdc) {
+            // Arc: native USDC comes from the system emitter; its interface's log is the same transfer.
+            if (token === getAddress(this.opts.nativeUsdc)) continue;
+            if (token === getAddress(ARC_SYSTEM_EMITTER)) {
+              token = getAddress(this.opts.nativeUsdc);
+              amount = amount / ARC_NATIVE_SCALE;
+              if (amount === 0n) continue;
+            }
+          }
+          out.push({ network: this.network, tokenContract: token, from: getAddress(l.args.from!), to: getAddress(l.args.to!), amount, txHash: l.transactionHash, logIndex: l.logIndex, blockNumber: l.blockNumber, blockTime: await this.blockTime(l.blockNumber) });
         }
       }
     }
@@ -247,6 +288,14 @@ export class EvmChainClient implements ChainClient {
         const who = args._account ?? args._user;
         if (!who || !l.transactionHash || l.blockNumber === null) continue;
         out.push({ address: getAddress(who), frozen: l.eventName === 'Blacklisted' || l.eventName === 'AddedBlackList', txHash: l.transactionHash, blockNumber: l.blockNumber });
+      }
+      if (this.isNativeUsdc(token)) {
+        const arc = await this.client.getLogs({ address: getAddress(ARC_NATIVE_COIN_CONTROL), events: arcBlocklistEvents, fromBlock: start, toBlock: end });
+        for (const l of arc) {
+          const who = (l.args as { account?: Hex }).account;
+          if (!who || !l.transactionHash || l.blockNumber === null) continue;
+          out.push({ address: getAddress(who), frozen: l.eventName === 'Blocklisted', txHash: l.transactionHash, blockNumber: l.blockNumber });
+        }
       }
     }
     return out;

@@ -13,7 +13,7 @@ export function createChains(cfg: Config): Chains {
     out[n as Network] =
       n === 'tron'
         ? new TronChainClient({ hosts: c.rpcUrls, apiKey: process.env.TRON_API_KEY, keeperKey: c.keeperKey })
-        : new EvmChainClient({ network: n as Network, rpcUrls: c.rpcUrls, chainId: c.chainId, finality: c.finality, keeperKey: c.keeperKey });
+        : new EvmChainClient({ network: n as Network, rpcUrls: c.rpcUrls, chainId: c.chainId, finality: c.finality, keeperKey: c.keeperKey, nativeUsdc: n === 'arc' ? c.tokens.USDC : undefined });
   }
   return out;
 }

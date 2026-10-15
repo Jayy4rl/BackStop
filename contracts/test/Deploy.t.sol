@@ -30,7 +30,7 @@ contract DeployTest is Test {
             backupArbiter: backupArb,
             treasury: treasury,
             token: address(usdc),
-            tokenIsUsdt: false,
+            tokenKind: Deploy.TokenKind.Usdc,
             feeCapBps: 150,
             timelockDelay: 48 hours,
             create2Prefix: 0xff

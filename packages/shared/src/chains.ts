@@ -103,7 +103,7 @@ export const TOKEN_DECIMALS = 6;
 
 /**
  * Canonical token contracts per network. Arc's USDC is the native gas token exposed through an
- * ERC-20 interface; its address must be confirmed against Arc's docs before launch.
+ * ERC-20 interface (docs.arc.io lists 0x3600… on mainnet, chain 5042, and testnet, 5042002).
  * Testnet deployments override these through server configuration.
  */
 export const CANONICAL_TOKENS: Record<'mainnet' | 'testnet', Partial<Record<`${Network}:${Token}`, string>>> = {
@@ -121,6 +121,17 @@ export const CANONICAL_TOKENS: Record<'mainnet' | 'testnet', Partial<Record<`${N
     'ethereum:USDC': '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238',
   },
 };
+
+/**
+ * Arc system addresses. USDC is Arc's native coin: every movement (ERC-20 transfers, plain native
+ * sends, mints, burns) is logged as a standard Transfer from ARC_SYSTEM_EMITTER in 18 decimals,
+ * while the 0x3600… interface logs only its own transfers, in 6. The blocklist is the
+ * NativeCoinControl precompile (`isBlocklisted(address)`, events Blocklisted / UnBlocklisted).
+ */
+export const ARC_SYSTEM_EMITTER = '0xffffFFFfFFffffffffffffffFfFFFfffFFFfFFfE';
+export const ARC_NATIVE_COIN_CONTROL = '0x1800000000000000000000000000000000000001';
+/** Native (18 decimals) to token units (6 decimals). */
+export const ARC_NATIVE_SCALE = 10n ** 12n;
 
 export function pairKey(network: Network, token: Token): `${Network}:${Token}` {
   return `${network}:${token}`;

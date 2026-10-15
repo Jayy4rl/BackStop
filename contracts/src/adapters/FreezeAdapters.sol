@@ -24,3 +24,19 @@ contract UsdtFreezeAdapter is IFreezeAdapter {
         return ok && ret.length >= 32 && abi.decode(ret, (bool));
     }
 }
+
+/// @notice USDC on Arc. USDC is Arc's native coin and its blocklist lives in the NativeCoinControl
+/// precompile (`isBlocklisted(address)`, arc-node crates/precompiles/src/native_coin_control.rs),
+/// not on the ERC-20 interface at 0x3600…, so the standard USDC adapter would always answer
+/// "not frozen" there. Falls back to the token's own `isBlacklisted` if the precompile does not answer.
+contract ArcUsdcFreezeAdapter is IFreezeAdapter {
+    address public constant NATIVE_COIN_CONTROL = 0x1800000000000000000000000000000000000001;
+
+    function isFrozen(address token, address account) external view returns (bool) {
+        (bool ok, bytes memory ret) =
+            NATIVE_COIN_CONTROL.staticcall(abi.encodeWithSignature("isBlocklisted(address)", account));
+        if (ok && ret.length >= 32) return abi.decode(ret, (bool));
+        (ok, ret) = token.staticcall(abi.encodeWithSignature("isBlacklisted(address)", account));
+        return ok && ret.length >= 32 && abi.decode(ret, (bool));
+    }
+}
